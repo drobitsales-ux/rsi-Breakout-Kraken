@@ -19,7 +19,7 @@ logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
 # === НАСТРОЙКИ PROP FIRM (Breakout / Kraken) ===
 DB_PATH = 'bot_prop.db'  
 TOKEN = os.getenv('TELEGRAM_TOKEN')
-GROUP_CHAT_ID = -1003955653290  # <--- ПРОСТО ВПИШИ ЦИФРЫ СЮДА
+GROUP_CHAT_ID = -1003955653290  # ХАРДКОД ID КАНАЛА ДЛЯ НАДЕЖНОСТИ
 KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
 KRAKEN_SECRET = os.getenv('KRAKEN_SECRET')
 
@@ -68,7 +68,7 @@ exchange.set_sandbox_mode(True)
 def get_real_balance():
     try:
         bal = exchange.fetch_balance()
-        # Ищем либо USDT (для реального счета), либо USD (для демо)
+        # Поддержка USD (для демо) и USDT (для реала)
         return float(bal.get('USDT', {}).get('total', 0)) or float(bal.get('USD', {}).get('total', 0))
     except: return 0.0
 
@@ -112,7 +112,6 @@ def calculate_rsi(prices, window=14):
 
 def get_market_context():
     try:
-        # Kraken Futures использует USD вместо USDT
         ohlcv = exchange.fetch_ohlcv('BTC/USD:USD', timeframe='15m', limit=50)
         c = np.array([x[4] for x in ohlcv], dtype=float)
         trend = 'Long' if c[-1] > np.mean(c[-21:-1]) else 'Short' 
@@ -127,12 +126,12 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         
     try:
         bal = exchange.fetch_balance()
-        # Бот будет брать тот баланс, который доступен
-        free_usdt = float(bal.get('USDT', {}).get('free', 0)) or float(bal.get('USD', {}).get('free', 0))
-        if free_usdt <= 0: return
+        # Поддержка USD (для демо) и USDT (для реала)
+        free_usd = float(bal.get('USDT', {}).get('free', 0)) or float(bal.get('USD', {}).get('free', 0))
+        if free_usd <= 0: return
 
         actual_sl_dist = abs(current_price - sl_price)
-        risk_amount = free_usdt * RISK_PER_TRADE
+        risk_amount = free_usd * RISK_PER_TRADE
         
         contract_size = float(exchange.market(sym).get('contractSize', 1.0))
         qty_coins = risk_amount / actual_sl_dist if actual_sl_dist > 0 else 0
@@ -141,7 +140,7 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         
         pos_side = 'LONG' if direction == 'Long' else 'SHORT'
         try: exchange.set_leverage(LEVERAGE, sym)
-        except: pass # На Kraken плечо иногда задается прямо в ордере
+        except: pass 
         
         exchange.create_market_order(sym, 'buy' if direction == 'Long' else 'sell', qty)
         sl_ord = exchange.create_order(sym, 'stop_market', 'sell' if direction == 'Long' else 'buy', qty, params={'stopLossPrice': sl_price})
@@ -154,7 +153,10 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         save_positions()
         
         sl_pct = (actual_sl_dist / current_price) * 100
-        bot.send_message(GROUP_CHAT_ID, f"💥 **ВЫСТРЕЛ [Kraken Prop RSI]: {sym.split(':')[0]}**\nНаправление: **#{direction.upper()}**\n\nЦена: {current_price}\nОбъем: {qty}\nSL: {sl_price} ({sl_pct:.2f}%)\nTP1: {tp1_price}")
+        
+        # HTML разметка
+        msg = f"💥 <b>ВЫСТРЕЛ [Kraken Prop RSI]: {sym.split(':')[0]}</b>\nНаправление: <b>#{direction.upper()}</b>\n\nЦена: {current_price}\nОбъем: {qty}\nSL: {sl_price} ({sl_pct:.2f}%)\nTP1: {tp1_price}"
+        bot.send_message(GROUP_CHAT_ID, msg, parse_mode="HTML")
     except Exception as e: logging.error(f"Trade error {sym}: {e}")
 
 def monitor_positions_job():
@@ -180,12 +182,12 @@ def monitor_positions_job():
                 if pnl > 0: 
                     daily_stats['wins'] += 1
                     CONSECUTIVE_LOSSES = 0
-                    bot.send_message(GROUP_CHAT_ID, f"✅ **{clean_name} закрыта в плюс!**\nPNL: +{pnl:.2f} USDT")
+                    bot.send_message(GROUP_CHAT_ID, f"✅ <b>{clean_name} закрыта в плюс!</b>\nPNL: +{pnl:.2f} USD", parse_mode="HTML")
                 else: 
                     daily_stats['sl_hits'] = daily_stats.get('sl_hits', 0) + 1
                     CONSECUTIVE_LOSSES += 1
                     COOLDOWN_CACHE[sym] = time.time() + 14400
-                    bot.send_message(GROUP_CHAT_ID, f"🛑 **{clean_name} выбита по SL.**\nPNL: {pnl:.2f} USDT\n❄️ Монета заморожена.")
+                    bot.send_message(GROUP_CHAT_ID, f"🛑 <b>{clean_name} выбита по SL.</b>\nPNL: {pnl:.2f} USD\n❄️ Монета заморожена.", parse_mode="HTML")
                 continue
 
             if 'open_time' not in pos: pos['open_time'] = datetime.now(timezone.utc).isoformat()
@@ -202,7 +204,7 @@ def monitor_positions_job():
                     if pnl > 0: daily_stats['wins'] += 1; CONSECUTIVE_LOSSES = 0
                     else: CONSECUTIVE_LOSSES += 1; COOLDOWN_CACHE[sym] = time.time() + 14400
                         
-                    bot.send_message(GROUP_CHAT_ID, f"{'✅' if pnl > 0 else '🛑'} **{clean_name} закрыта по ТАЙМАУТУ!**\nPNL: {pnl:.2f} USDT")
+                    bot.send_message(GROUP_CHAT_ID, f"{'✅' if pnl > 0 else '🛑'} <b>{clean_name} закрыта по ТАЙМАУТУ!</b>\nPNL: {pnl:.2f} USD", parse_mode="HTML")
                     continue
                 except: pass
 
@@ -230,7 +232,7 @@ def monitor_positions_job():
                             'micro_step': atr_step * 0.3, 'trail_distance': atr_step * 0.8, 
                             'trail_trigger': pos['tp1'] + (atr_step * 0.3 * (1 if is_long else -1))
                         })
-                        bot.send_message(GROUP_CHAT_ID, f"💰 **{clean_name} TP1 взят!** (50% закрыто). 🛡 Трейлинг запущен.")
+                        bot.send_message(GROUP_CHAT_ID, f"💰 <b>{clean_name} TP1 взят!</b> (50% закрыто). 🛡 Трейлинг запущен.", parse_mode="HTML")
                     except: pass
             
             if pos.get('tp1_hit'):
@@ -267,8 +269,10 @@ def run_market_scan():
             btc_trend, _ = get_market_context()
             
             for sym, market in markets.items():
-                if market.get('active') is False: continue  # Пропускаем только если явно отключено
-                if not (sym.endswith(':USD') or sym.endswith(':USDT')): continue # Ищем только фьючерсы к USD/USDT
+                # ПРАВКА ДЛЯ ДЕМО СЕРВЕРА
+                if market.get('active') is False: continue
+                if not (sym.endswith(':USD') or sym.endswith(':USDT')): continue
+                
                 if any(kw in sym.upper() for kw in EXCLUDED_KEYWORDS): continue
                 if any(pos['symbol'].split(':')[0] == sym.split(':')[0] for pos in active_positions): continue
                 
@@ -294,7 +298,6 @@ def run_market_scan():
                     rsi = calculate_rsi(c[:-1], 14)
                     atr = np.mean(np.maximum(h[1:]-l[1:], np.maximum(np.abs(h[1:]-c[:-1]), np.abs(l[1:]-c[:-1])))[-14:])
                     
-                    # Фильтр тренда монеты (Справедливая цена)
                     sma_50 = np.mean(c[-50:])
                     
                     avg_vol = np.mean(v[-22:-2]) if len(v) >= 22 else np.mean(v[:-2])
@@ -319,7 +322,6 @@ def run_market_scan():
                     
                     direction = None; sl_price = 0
                     
-                    # Логика: Тренд BTC + Перепроданность + Паттерн + Цена ВЫШЕ SMA 50 + БЕЗОПАСНЫЙ СТОП 1.5 ATR
                     if btc_trend == 'Long' and rsi < 30 and has_bullish_pattern and is_high_volume and current_price > sma_50:
                         direction = 'Long'
                         sl_price = np.min(l[-4:-1]) - (atr * 1.5)
@@ -364,9 +366,8 @@ if __name__ == '__main__':
     load_positions()
     logging.info("🚀 Запуск KRAKEN RSI БОТА (Prop Firm: 0.5% Risk, SMA50, Meme-Filter)...")
     
-    # === ДОБАВЛЯЕМ СТАРТОВОЕ СООБЩЕНИЕ ===
     try:
-        bot.send_message(GROUP_CHAT_ID, "🟢 **KRAKEN RSI БОТ** успешно запущен и готов к работе!", parse_mode="Markdown")
+        bot.send_message(GROUP_CHAT_ID, "🟢 <b>KRAKEN RSI БОТ</b> успешно запущен и готов к работе!", parse_mode="HTML")
     except Exception as e:
         logging.error(f"TG Error: {e}")
         
