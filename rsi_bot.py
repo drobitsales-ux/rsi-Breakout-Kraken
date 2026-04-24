@@ -19,7 +19,8 @@ logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
 # === НАСТРОЙКИ PROP FIRM (Breakout / Kraken) ===
 DB_PATH = 'bot_prop.db'  
 TOKEN = os.getenv('TELEGRAM_TOKEN')
-GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', -1003407154454)) # Замени в Render на ID новой группы
+# Добавили значение по умолчанию "0", чтобы бот не падал, если забудешь переменную в Render
+GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', 0)) 
 KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
 KRAKEN_SECRET = os.getenv('KRAKEN_SECRET')
 
@@ -66,6 +67,8 @@ exchange = ccxt.krakenfutures({
     'secret': KRAKEN_SECRET,
     'enableRateLimit': True
 })
+# ВАЖНО: Включаем демо-сервер (Sandbox) для тестирования!
+exchange.set_sandbox_mode(True)
 
 def get_real_balance():
     try:
