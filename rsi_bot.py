@@ -25,11 +25,11 @@ KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
 KRAKEN_SECRET = os.getenv('KRAKEN_SECRET')
 
 # Строгий риск-менеджмент для пропа
-RISK_PER_TRADE = 0.005      # РИСК 0.5%
-MAX_POSITIONS = 3           # Макс. просадка в моменте 1.5%
-LEVERAGE = 5                # Сниженное плечо
-MAX_SPREAD_PERCENT = 0.002  
-MIN_VOLUME_USDT = 1500000   
+RISK_PER_TRADE = 0.005
+MAX_POSITIONS = 3           
+LEVERAGE = 5                
+MAX_SPREAD_PERCENT = 1.0    # РАЗРЕШАЕМ: на демо спреды огромные
+MIN_VOLUME_USDT = 0         # РАЗРЕШАЕМ: на демо нет реальных объемов
 COOLDOWN_CACHE = {}
 
 TRADE_TIMEOUT_PROFIT_HOURS = 1.5  
@@ -40,12 +40,8 @@ MIN_RR_RATIO = 1.5
 MIN_SL_PCT = 1.2            
 MAX_SL_PCT = 4.0   
 
-# РАСШИРЕННЫЙ ЧЕРНЫЙ СПИСОК (Анти-Мемкоины)
+# СОКРАЩЕННЫЙ СПИСОК (Разрешаем торговать BTC и ETH на демо)
 EXCLUDED_KEYWORDS = [
-    'BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT', 
-    'NCS', 'NCFX', 'NCCO', 'NCSI', 'NIKKEI', 'NASDAQ', 'SP500', 
-    'GOLD', 'SILVER', 'AUT', 'XAU', 'PAXG', 'EUR', '1000', 'LUNC', 
-    'USTC', 'USDC', 'BTC/', 'ETH/', 'BNB/', 'SOL/', 'XRP/', 'ADA/', 'TRX/',
     'FART', 'PEPE', 'SHIB', 'DOGE', 'WIF', 'BONK', 'FLOKI', 'BOME',
     'MEME', 'TURBO', 'SATS', 'RATS', 'ORDI', 'PEOPLE'
 ]
