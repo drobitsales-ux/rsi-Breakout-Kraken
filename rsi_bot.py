@@ -69,7 +69,8 @@ exchange.set_sandbox_mode(True)
 def get_real_balance():
     try:
         bal = exchange.fetch_balance()
-        return float(bal['USDT']['total']) 
+        # Ищем либо USDT (для реального счета), либо USD (для демо)
+        return float(bal.get('USDT', {}).get('total', 0)) or float(bal.get('USD', {}).get('total', 0))
     except: return 0.0
 
 def get_db_conn(): return sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -127,7 +128,8 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         
     try:
         bal = exchange.fetch_balance()
-        free_usdt = float(bal['USDT']['free'])
+        # Бот будет брать тот баланс, который доступен
+        free_usdt = float(bal.get('USDT', {}).get('free', 0)) or float(bal.get('USD', {}).get('free', 0))
         if free_usdt <= 0: return
 
         actual_sl_dist = abs(current_price - sl_price)
