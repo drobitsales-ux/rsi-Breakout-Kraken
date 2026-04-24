@@ -365,6 +365,12 @@ if __name__ == '__main__':
     load_positions()
     logging.info("🚀 Запуск KRAKEN RSI БОТА (Prop Firm: 0.5% Risk, SMA50, Meme-Filter)...")
     
+    # === ДОБАВЛЯЕМ СТАРТОВОЕ СООБЩЕНИЕ ===
+    try:
+        bot.send_message(GROUP_CHAT_ID, "🟢 **KRAKEN RSI БОТ** успешно запущен и готов к работе!", parse_mode="Markdown")
+    except Exception as e:
+        logging.error(f"TG Error: {e}")
+        
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_market_scan, 'interval', seconds=60)
     scheduler.add_job(monitor_positions_job, 'interval', seconds=15)
