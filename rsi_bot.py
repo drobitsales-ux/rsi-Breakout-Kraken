@@ -266,7 +266,8 @@ def run_market_scan():
             btc_trend, _ = get_market_context()
             
             for sym, market in markets.items():
-                if market.get('type') != 'swap' or not market.get('active'): continue
+                if market.get('active') is False: continue  # Пропускаем только если явно отключено
+                if not (sym.endswith(':USD') or sym.endswith(':USDT')): continue # Ищем только фьючерсы к USD/USDT
                 if any(kw in sym.upper() for kw in EXCLUDED_KEYWORDS): continue
                 if any(pos['symbol'].split(':')[0] == sym.split(':')[0] for pos in active_positions): continue
                 
