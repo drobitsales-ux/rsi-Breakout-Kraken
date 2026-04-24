@@ -16,19 +16,26 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(message)s')
 logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
 logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
 
-# === НАСТРОЙКИ v8.12 (Macro Trend Filter Disabled) ===
-DB_PATH = 'bot.db'  
+# === НАСТРОЙКИ PROP FIRM (Breakout / Kraken) ===
+DB_PATH = 'bot_prop.db'  
 TOKEN = os.getenv('TELEGRAM_TOKEN')
-GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID', -1003407154454))
-BINGX_API_KEY = os.getenv('BINGX_API_KEY')
-BINGX_SECRET = os.getenv('BINGX_SECRET')
+GROUP_CHAT_ID = int(os.getenv('GROUP_CHAT_ID')) # СДЕЛАЙ НОВЫЙ ЧАТ!
+KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
+KRAKEN_SECRET = os.getenv('KRAKEN_SECRET')
 
-RISK_PER_TRADE = 0.02       
-MAX_POSITIONS = 3           
-LEVERAGE = 10               
+RISK_PER_TRADE = 0.005      # РИСК 0.5% (Защита от просадки)
+MAX_POSITIONS = 3           # Макс. просадка в моменте 1.5% (при лимите 4%)
+LEVERAGE = 5                # Сниженное плечо
 MAX_SPREAD_PERCENT = 0.002  
-MIN_VOLUME_USDT = 2500000
+MIN_VOLUME_USDT = 1500000   # Чуть снижен для Kraken (ликвидность там ниже)
 COOLDOWN_CACHE = {}
+
+# === ИНИЦИАЛИЗАЦИЯ БИРЖИ KRAKEN ===
+exchange = ccxt.krakenfutures({
+    'apiKey': KRAKEN_API_KEY, 
+    'secret': KRAKEN_SECRET,
+    'enableRateLimit': True
+})
 
 TRADE_TIMEOUT_PROFIT_HOURS = 1.5  
 TRADE_TIMEOUT_ANY_HOURS = 3.0     
