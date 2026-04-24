@@ -112,14 +112,12 @@ def calculate_rsi(prices, window=14):
 
 def get_market_context():
     try:
-        # Для KrakenFutures тикер BTC может называться PI_XBTUSD или PF_XBTUSD, 
-        # но CCXT обычно умеет маппить стандартный BTC/USDT:USDT
-        ohlcv = exchange.fetch_ohlcv('BTC/USDT:USDT', timeframe='15m', limit=50)
+        # Kraken Futures использует USD вместо USDT
+        ohlcv = exchange.fetch_ohlcv('BTC/USD:USD', timeframe='15m', limit=50)
         c = np.array([x[4] for x in ohlcv], dtype=float)
         trend = 'Long' if c[-1] > np.mean(c[-21:-1]) else 'Short' 
         return trend, True
     except: 
-        # Запасной вариант, если CCXT требует специфичный символ
         return 'Neutral', False
 
 def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
