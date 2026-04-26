@@ -107,20 +107,32 @@ def get_market_context():
     except: 
         return 'Neutral', False
 
-def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
-    global COOLDOWN_CACHE
+def execute_trade(sym, signal_data):
+    global active_positions, COOLDOWN_CACHE
     if len(active_positions) >= MAX_POSITIONS or any(p['symbol'] == sym for p in active_positions): return
     if sym in COOLDOWN_CACHE and time.time() < COOLDOWN_CACHE[sym]: return
         
+    direction, current_price = signal_data['mode'], signal_data['price']
+    sl_price, tp1_price, atr = signal_data['sl_price'], signal_data['tp1_price'], signal_data['atr']
+    
     try:
         bal = exchange.fetch_balance()
         free_usd = float(bal.get('USDT', {}).get('free', 0)) or float(bal.get('USD', {}).get('free', 0))
         if free_usd <= 0: return
 
         actual_sl_dist = abs(current_price - sl_price)
+        sl_pct = (actual_sl_dist / current_price) * 100
+        
+        # ЗАЩИТА ОТ ДИКИХ СТОПОВ И ПРОСКАЛЬЗЫВАНИЙ
+        if sl_pct > MAX_SL_PCT:
+            logging.info(f"Отмена входа {sym}: Слишком широкий SL ({sl_pct:.1f}%)")
+            COOLDOWN_CACHE[sym] = time.time() + 3600
+            return
+            
         risk_amount = free_usd * RISK_PER_TRADE
         
-        contract_size = float(exchange.market(sym).get('contractSize', 1.0))
+        market = exchange.markets.get(sym, {})
+        contract_size = float(market.get('contractSize', 1.0))
         qty_coins = risk_amount / actual_sl_dist if actual_sl_dist > 0 else 0
         qty = float(exchange.amount_to_precision(sym, qty_coins / contract_size if contract_size > 0 else qty_coins))
         if qty <= 0: return
@@ -139,8 +151,20 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         })
         save_positions()
         
-        sl_pct = (actual_sl_dist / current_price) * 100
-        msg = f"💥 <b>ВЫСТРЕЛ [Kraken Prop RSI]: {sym.split(':')[0]}</b>\nНаправление: <b>#{direction.upper()}</b>\n\nЦена: {current_price}\nОбъем: {qty}\nSL: {sl_price} ({sl_pct:.2f}%)\nTP1: {tp1_price}"
+        # ОТПРАВКА СООБЩЕНИЯ С АНАЛИТИКОЙ
+        msg = (
+            f"💥 <b>ВЫСТРЕЛ [RSI Bot]: {sym.split(':')[0]}</b>\n"
+            f"Направление: <b>#{direction.upper()}</b>\n\n"
+            f"Цена: {current_price}\n"
+            f"Объем (контр.): {qty}\n"
+            f"SL: {sl_price} ({sl_pct:.2f}%)\n"
+            f"TP1: {tp1_price}\n\n"
+            f"📊 <b>Аналитика сетапа:</b>\n"
+            f"🔸 Уровень RSI: {signal_data['rsi']:.1f}\n"
+            f"🔸 Отклон. от SMA50: {signal_data['sma_dist']:.2f}%\n"
+            f"🔸 BTC Тренд: {signal_data['btc_trend']}\n"
+            f"🔸 Объем 24ч: {signal_data['vol']/1000000:.1f}M$"
+        )
         bot.send_message(GROUP_CHAT_ID, msg, parse_mode="HTML")
     except Exception as e: logging.error(f"Trade error {sym}: {e}")
 
@@ -328,13 +352,16 @@ def run_market_scan():
                     tp1_price = current_price + (actual_sl_dist * MIN_RR_RATIO) if direction == 'Long' else current_price - (actual_sl_dist * MIN_RR_RATIO)
                     
                     stats['passed'] += 1
-                    execute_trade(sym, direction, current_price, sl_price, tp1_price, atr)
+                    
+                    sma_dist = abs(current_price - sma_50) / current_price * 100
+                    signal_data = {
+                        'mode': direction, 'price': current_price, 'sl_price': sl_price, 
+                        'tp1_price': tp1_price, 'atr': atr, 'rsi': rsi, 
+                        'sma_dist': sma_dist, 'btc_trend': btc_trend, 'vol': float(ticker.get('quoteVolume', 0))
+                    }
+                    
+                    execute_trade(sym, signal_data)
                     time.sleep(1)
-                except Exception as e: pass
-
-            logging.info(f"🔎 [РАДАР] Всего: {stats['total']} -> Неликвид: {stats['low_vol']} -> Широкий SL: {stats['sl_too_wide']} -> Ждем Сетап: {stats['rsi_ignored']} -> ВХОДЫ: {stats['passed']}")
-            gc.collect(); time.sleep(150)
-        except Exception as e: logging.error(f"Scan Error: {e}"); time.sleep(60)
 
 # === ОТПРАВКА ЕЖЕДНЕВНОГО ОТЧЕТА ===
 def send_daily_report():
