@@ -16,19 +16,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s | %(message)s')
 logging.getLogger('apscheduler.executors.default').setLevel(logging.WARNING)
 logging.getLogger('apscheduler.scheduler').setLevel(logging.WARNING)
 
-# === НАСТРОЙКИ PROP FIRM (Breakout / Kraken) ===
 DB_PATH = 'bot_prop.db'  
 TOKEN = os.getenv('TELEGRAM_TOKEN')
-GROUP_CHAT_ID = -1003955653290  # ХАРДКОД ID КАНАЛА ДЛЯ НАДЕЖНОСТИ
+GROUP_CHAT_ID = -1003955653290  
 KRAKEN_API_KEY = os.getenv('KRAKEN_API_KEY')
 KRAKEN_SECRET = os.getenv('KRAKEN_SECRET')
 
-# Строгий риск-менеджмент для пропа
 RISK_PER_TRADE = 0.005
 MAX_POSITIONS = 3           
 LEVERAGE = 5                
-MAX_SPREAD_PERCENT = 1.0    # РАЗРЕШАЕМ: на демо спреды огромные
-MIN_VOLUME_USDT = 0         # РАЗРЕШАЕМ: на демо нет реальных объемов
+MAX_SPREAD_PERCENT = 1.0    
+MIN_VOLUME_USDT = 0         
 COOLDOWN_CACHE = {}
 
 TRADE_TIMEOUT_PROFIT_HOURS = 1.5  
@@ -39,7 +37,6 @@ MIN_RR_RATIO = 1.5
 MIN_SL_PCT = 1.2            
 MAX_SL_PCT = 4.0   
 
-# СОКРАЩЕННЫЙ СПИСОК (Разрешаем торговать BTC и ETH на демо)
 EXCLUDED_KEYWORDS = [
     'FART', 'PEPE', 'SHIB', 'DOGE', 'WIF', 'BONK', 'FLOKI', 'BOME',
     'MEME', 'TURBO', 'SATS', 'RATS', 'ORDI', 'PEOPLE'
@@ -47,30 +44,17 @@ EXCLUDED_KEYWORDS = [
 
 GLOBAL_STOP_UNTIL = None
 CONSECUTIVE_LOSSES = 0
-START_OF_DAY_BALANCE = 0.0
 
-daily_stats = {
-    'trades': 0, 'wins': 0, 'sl_hits': 0, 'timeouts': 0, 'pnl': 0.0, 'prev_winrate': 0.0
-}
+daily_stats = {'trades': 0, 'wins': 0, 'sl_hits': 0, 'timeouts': 0, 'pnl': 0.0, 'prev_winrate': 0.0, 'start_balance': 0.0}
 active_positions = []
 
 bot = telebot.TeleBot(TOKEN)
-
-# === ЕДИНСТВЕННАЯ ИНИЦИАЛИЗАЦИЯ БИРЖИ KRAKEN ===
 exchange = ccxt.krakenfutures({
     'apiKey': KRAKEN_API_KEY, 
     'secret': KRAKEN_SECRET,
     'enableRateLimit': True
 })
-# ВАЖНО: Включаем демо-сервер (Sandbox) для тестирования!
 exchange.set_sandbox_mode(True)
-
-def get_real_balance():
-    try:
-        bal = exchange.fetch_balance()
-        # Поддержка USD (для демо) и USDT (для реала)
-        return float(bal.get('USDT', {}).get('total', 0)) or float(bal.get('USD', {}).get('total', 0))
-    except: return 0.0
 
 def get_db_conn(): return sqlite3.connect(DB_PATH, check_same_thread=False)
 
@@ -80,14 +64,17 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS daily_stats (id INTEGER PRIMARY KEY, pnl REAL, trades INTEGER, wins INTEGER)''')
     try: c.execute("ALTER TABLE daily_stats ADD COLUMN prev_winrate REAL DEFAULT 0.0")
     except: pass
+    try: c.execute("ALTER TABLE daily_stats ADD COLUMN start_balance REAL DEFAULT 0.0")
+    except: pass
     conn.commit(); conn.close()
 
 def save_positions():
     try:
         conn = get_db_conn(); c = conn.cursor()
         c.execute("INSERT OR REPLACE INTO active_positions (id, data) VALUES (1, ?)", (json.dumps(active_positions),))
-        c.execute("INSERT OR REPLACE INTO daily_stats (id, pnl, trades, wins, prev_winrate) VALUES (1, ?, ?, ?, ?)", 
-                  (daily_stats.get('pnl', 0.0), daily_stats['trades'], daily_stats['wins'], daily_stats.get('prev_winrate', 0.0)))
+        c.execute("INSERT OR REPLACE INTO daily_stats (id, pnl, trades, wins, prev_winrate, start_balance) VALUES (1, ?, ?, ?, ?, ?)", 
+                  (daily_stats.get('pnl', 0.0), daily_stats['trades'], daily_stats['wins'], 
+                   daily_stats.get('prev_winrate', 0.0), daily_stats.get('start_balance', 0.0)))
         conn.commit(); conn.close()
     except Exception as e: logging.error(f"Save error: {e}")
 
@@ -97,8 +84,9 @@ def load_positions():
         conn = get_db_conn(); c = conn.cursor()
         c.execute("SELECT data FROM active_positions WHERE id = 1"); row = c.fetchone()
         if row: active_positions = json.loads(row[0])
-        c.execute("SELECT pnl, trades, wins, prev_winrate FROM daily_stats WHERE id = 1"); stat_row = c.fetchone()
-        if stat_row: daily_stats['pnl'], daily_stats['trades'], daily_stats['wins'], daily_stats['prev_winrate'] = stat_row
+        c.execute("SELECT pnl, trades, wins, prev_winrate, start_balance FROM daily_stats WHERE id = 1"); stat_row = c.fetchone()
+        if stat_row: 
+            daily_stats['pnl'], daily_stats['trades'], daily_stats['wins'], daily_stats['prev_winrate'], daily_stats['start_balance'] = stat_row
         conn.close()
     except Exception: pass
 
@@ -126,7 +114,6 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         
     try:
         bal = exchange.fetch_balance()
-        # Поддержка USD (для демо) и USDT (для реала)
         free_usd = float(bal.get('USDT', {}).get('free', 0)) or float(bal.get('USD', {}).get('free', 0))
         if free_usd <= 0: return
 
@@ -153,8 +140,6 @@ def execute_trade(sym, direction, current_price, sl_price, tp1_price, atr):
         save_positions()
         
         sl_pct = (actual_sl_dist / current_price) * 100
-        
-        # HTML разметка
         msg = f"💥 <b>ВЫСТРЕЛ [Kraken Prop RSI]: {sym.split(':')[0]}</b>\nНаправление: <b>#{direction.upper()}</b>\n\nЦена: {current_price}\nОбъем: {qty}\nSL: {sl_price} ({sl_pct:.2f}%)\nTP1: {tp1_price}"
         bot.send_message(GROUP_CHAT_ID, msg, parse_mode="HTML")
     except Exception as e: logging.error(f"Trade error {sym}: {e}")
@@ -178,11 +163,12 @@ def monitor_positions_job():
             if not curr:
                 pnl = (ticker - pos['entry_price']) * pos['initial_qty'] if is_long else (pos['entry_price'] - ticker) * pos['initial_qty']
                 daily_stats['trades'] += 1
+                daily_stats['pnl'] = daily_stats.get('pnl', 0.0) + pnl
                 
                 if pnl > 0: 
                     daily_stats['wins'] += 1
                     CONSECUTIVE_LOSSES = 0
-                    bot.send_message(GROUP_CHAT_ID, f"✅ <b>{clean_name} закрыта в плюс!</b>\nPNL: +{pnl:.2f} USD", parse_mode="HTML")
+                    bot.send_message(GROUP_CHAT_ID, f"✅ <b>{clean_name} закрыта в плюс!</b>\nPNL: {pnl:+.2f} USD", parse_mode="HTML")
                 else: 
                     daily_stats['sl_hits'] = daily_stats.get('sl_hits', 0) + 1
                     CONSECUTIVE_LOSSES += 1
@@ -200,11 +186,12 @@ def monitor_positions_job():
                     if pos.get('sl_order_id'): exchange.cancel_order(pos['sl_order_id'], sym)
                     daily_stats['trades'] += 1
                     daily_stats['timeouts'] = daily_stats.get('timeouts', 0) + 1 
+                    daily_stats['pnl'] = daily_stats.get('pnl', 0.0) + pnl
                     
                     if pnl > 0: daily_stats['wins'] += 1; CONSECUTIVE_LOSSES = 0
                     else: CONSECUTIVE_LOSSES += 1; COOLDOWN_CACHE[sym] = time.time() + 14400
                         
-                    bot.send_message(GROUP_CHAT_ID, f"{'✅' if pnl > 0 else '🛑'} <b>{clean_name} закрыта по ТАЙМАУТУ!</b>\nPNL: {pnl:.2f} USD", parse_mode="HTML")
+                    bot.send_message(GROUP_CHAT_ID, f"{'✅' if pnl > 0 else '🛑'} <b>{clean_name} закрыта по ТАЙМАУТУ!</b>\nPNL: {pnl:+.2f} USD", parse_mode="HTML")
                     continue
                 except: pass
 
@@ -269,10 +256,8 @@ def run_market_scan():
             btc_trend, _ = get_market_context()
             
             for sym, market in markets.items():
-                # ПРАВКА ДЛЯ ДЕМО СЕРВЕРА
                 if market.get('active') is False: continue
                 if not (sym.endswith(':USD') or sym.endswith(':USDT')): continue
-                
                 if any(kw in sym.upper() for kw in EXCLUDED_KEYWORDS): continue
                 if any(pos['symbol'].split(':')[0] == sym.split(':')[0] for pos in active_positions): continue
                 
@@ -297,9 +282,7 @@ def run_market_scan():
                     current_price = c[-1]
                     rsi = calculate_rsi(c[:-1], 14)
                     atr = np.mean(np.maximum(h[1:]-l[1:], np.maximum(np.abs(h[1:]-c[:-1]), np.abs(l[1:]-c[:-1])))[-14:])
-                    
                     sma_50 = np.mean(c[-50:])
-                    
                     avg_vol = np.mean(v[-22:-2]) if len(v) >= 22 else np.mean(v[:-2])
                     is_high_volume = v[-2] > (avg_vol * 1.30)
                     
@@ -353,6 +336,44 @@ def run_market_scan():
             gc.collect(); time.sleep(150)
         except Exception as e: logging.error(f"Scan Error: {e}"); time.sleep(60)
 
+# === ОТПРАВКА ЕЖЕДНЕВНОГО ОТЧЕТА ===
+def send_daily_report():
+    global daily_stats
+    trades = daily_stats.get('trades', 0)
+    if trades == 0: return
+    
+    wins = daily_stats.get('wins', 0)
+    sl_hits = daily_stats.get('sl_hits', 0)
+    timeouts = daily_stats.get('timeouts', 0)
+    pnl = daily_stats.get('pnl', 0.0)
+    winrate = (wins / trades * 100) if trades > 0 else 0.0
+    
+    try:
+        bal = exchange.fetch_balance()
+        current_balance = float(bal.get('USDT', {}).get('total', 0)) or float(bal.get('USD', {}).get('total', 0))
+    except: current_balance = 0.0
+    
+    start_bal = daily_stats.get('start_balance', 0.0)
+    pct_change = ((current_balance - start_bal) / start_bal * 100) if start_bal > 0 else 0.0
+    
+    report = (
+        f"🗓 <b>ИТОГИ ДНЯ (Kraken RSI Bot):</b> {datetime.now(timezone.utc).strftime('%d.%m.%Y')}\n\n"
+        f"📉 Закрыто сделок: {trades}\n"
+        f"✅ В плюс (TP/Таймаут): {wins}\n"
+        f"🛑 По стопу: {sl_hits}\n"
+        f"⏳ По таймауту (общ.): {timeouts}\n\n"
+        f"🎯 Винрейт: {winrate:.1f}%\n"
+        f"💵 PNL сделок: {pnl:+.2f} USD\n\n"
+        f"🏦 <b>Баланс аккаунта:</b> {current_balance:.2f} USD\n"
+        f"📊 <b>Изменение за день:</b> {pct_change:+.2f}%"
+    )
+    
+    try: bot.send_message(GROUP_CHAT_ID, report, parse_mode="HTML")
+    except Exception as e: logging.error(f"Daily Report Error: {e}")
+    
+    daily_stats = {'trades': 0, 'wins': 0, 'sl_hits': 0, 'timeouts': 0, 'pnl': 0.0, 'prev_winrate': winrate, 'start_balance': current_balance}
+    save_positions()
+
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self): self.send_response(200); self.end_headers(); self.wfile.write(b"Kraken Prop RSI Bot Active")
     def log_message(self, format, *args): return
@@ -364,6 +385,16 @@ def run_server():
 if __name__ == '__main__':
     init_db()
     load_positions()
+    
+    # Фиксируем баланс при первом запуске
+    if daily_stats.get('start_balance', 0.0) == 0.0:
+        try:
+            bal = exchange.fetch_balance()
+            curr = float(bal.get('USDT', {}).get('total', 0)) or float(bal.get('USD', {}).get('total', 0))
+            daily_stats['start_balance'] = curr
+            save_positions()
+        except: pass
+        
     logging.info("🚀 Запуск KRAKEN RSI БОТА (Prop Firm: 0.5% Risk, SMA50, Meme-Filter)...")
     
     try:
@@ -374,6 +405,7 @@ if __name__ == '__main__':
     scheduler = BackgroundScheduler()
     scheduler.add_job(run_market_scan, 'interval', seconds=60)
     scheduler.add_job(monitor_positions_job, 'interval', seconds=15)
+    scheduler.add_job(send_daily_report, 'cron', hour=20, minute=0, timezone='UTC')
     scheduler.start()
     
     Thread(target=run_server, daemon=True).start()
