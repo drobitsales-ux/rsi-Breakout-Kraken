@@ -123,7 +123,6 @@ def execute_trade(sym, signal_data):
         actual_sl_dist = abs(current_price - sl_price)
         sl_pct = (actual_sl_dist / current_price) * 100
         
-        # ЗАЩИТА ОТ ДИКИХ СТОПОВ И ПРОСКАЛЬЗЫВАНИЙ
         if sl_pct > MAX_SL_PCT:
             logging.info(f"Отмена входа {sym}: Слишком широкий SL ({sl_pct:.1f}%)")
             COOLDOWN_CACHE[sym] = time.time() + 3600
@@ -151,7 +150,6 @@ def execute_trade(sym, signal_data):
         })
         save_positions()
         
-        # ОТПРАВКА СООБЩЕНИЯ С АНАЛИТИКОЙ
         msg = (
             f"💥 <b>ВЫСТРЕЛ [RSI Bot]: {sym.split(':')[0]}</b>\n"
             f"Направление: <b>#{direction.upper()}</b>\n\n"
@@ -184,8 +182,12 @@ def monitor_positions_job():
             curr = next((r for r in positions_raw if r['symbol'] == sym and float(r.get('contracts', 0)) > 0), None)
             ticker = tickers.get(sym, {}).get('last', pos['entry_price'])
             
+            market = exchange.markets.get(sym, {})
+            contract_size = float(market.get('contractSize', 1.0))
+            
             if not curr:
-                pnl = (ticker - pos['entry_price']) * pos['initial_qty'] if is_long else (pos['entry_price'] - ticker) * pos['initial_qty']
+                # ИСПРАВЛЕНА ОШИБКА: ДОБАВЛЕН CONTRACT SIZE В PNL
+                pnl = (ticker - pos['entry_price']) * pos['initial_qty'] * contract_size if is_long else (pos['entry_price'] - ticker) * pos['initial_qty'] * contract_size
                 daily_stats['trades'] += 1
                 daily_stats['pnl'] = daily_stats.get('pnl', 0.0) + pnl
                 
@@ -202,7 +204,9 @@ def monitor_positions_job():
 
             if 'open_time' not in pos: pos['open_time'] = datetime.now(timezone.utc).isoformat()
             hours_passed = (datetime.now(timezone.utc) - datetime.fromisoformat(pos['open_time'])).total_seconds() / 3600
-            pnl = (ticker - pos['entry_price']) * float(curr['contracts']) if is_long else (pos['entry_price'] - ticker) * float(curr['contracts'])
+            
+            # ИСПРАВЛЕНА ОШИБКА: ДОБАВЛЕН CONTRACT SIZE В PNL
+            pnl = (ticker - pos['entry_price']) * float(curr['contracts']) * contract_size if is_long else (pos['entry_price'] - ticker) * float(curr['contracts']) * contract_size
 
             if hours_passed >= TRADE_TIMEOUT_ANY_HOURS or (hours_passed >= TRADE_TIMEOUT_PROFIT_HOURS and pnl > 0):
                 try:
@@ -362,6 +366,11 @@ def run_market_scan():
                     
                     execute_trade(sym, signal_data)
                     time.sleep(1)
+                except Exception as e: pass
+
+            logging.info(f"🔎 [РАДАР] Всего: {stats['total']} -> Неликвид: {stats['low_vol']} -> Широкий SL: {stats['sl_too_wide']} -> Ждем Сетап: {stats['rsi_ignored']} -> ВХОДЫ: {stats['passed']}")
+            gc.collect(); time.sleep(150)
+        except Exception as e: logging.error(f"Scan Error: {e}"); time.sleep(60)
 
 # === ОТПРАВКА ЕЖЕДНЕВНОГО ОТЧЕТА ===
 def send_daily_report():
